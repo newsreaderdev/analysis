@@ -15,11 +15,14 @@ def rolling_correlation(
     prices: pd.DataFrame,
     window: int = 60,
     candidate_pairs: Iterable[tuple[str, str]] | None = None,
+    stable_min_mean: float = 0.7,
+    stable_max_std: float = 0.15,
 ) -> MetricResult:
-    """For each candidate pair, return per-date rolling Pearson correlation, plus stability summaries.
+    """Per-pair rolling Pearson correlation summary: mean / std / min / max.
 
-    Output schema is wider: a single row per pair carries `value` = mean rolling corr,
-    plus `std`, `min`, `max` describing how the correlation varies through time.
+    The `stable` flag (mean >= stable_min_mean AND std <= stable_max_std) is
+    the practical screen: a pair whose correlation is high *and* steady through
+    time is a pairs-trading candidate; a high-mean high-variance pair is not.
     """
     rets = to_returns(prices)
     pair_list = list(candidate_pairs) if candidate_pairs is not None else list(pairs(list(rets.columns)))
@@ -31,18 +34,24 @@ def rolling_correlation(
         rolled = s[a].rolling(window).corr(s[b]).dropna()
         if rolled.empty:
             continue
+        mean_c, std_c = float(rolled.mean()), float(rolled.std())
         rows.append({
             "ticker_a": a,
             "ticker_b": b,
             "metric": "rolling_corr",
-            "value": float(rolled.mean()),
-            "std": float(rolled.std()),
+            "value": mean_c,
+            "std": std_c,
             "min": float(rolled.min()),
             "max": float(rolled.max()),
+            "stable": bool(mean_c >= stable_min_mean and std_c <= stable_max_std),
             "window": window,
         })
     df = pd.DataFrame(rows) if rows else pd.DataFrame()
-    return MetricResult(df, meta={"window": window})
+    return MetricResult(df, meta={
+        "window": window,
+        "stable_min_mean": stable_min_mean,
+        "stable_max_std": stable_max_std,
+    })
 
 
 def regime_correlation(
@@ -85,6 +94,10 @@ def _breakpoint_pair(a: str, b: str, returns: pd.DataFrame, window: int = 60, pe
         algo = rpt.Pelt(model="rbf").fit(rolled.values.reshape(-1, 1))
         bkps = algo.predict(pen=pen)
         n_breaks = len(bkps) - 1  # last value is always len(signal)
+        last_break_date = None
+        if n_breaks > 0:
+            idx = min(bkps[-2] - 1, len(rolled) - 1)
+            last_break_date = str(rolled.index[idx].date())
     except Exception:
         return None
     return {
@@ -92,6 +105,9 @@ def _breakpoint_pair(a: str, b: str, returns: pd.DataFrame, window: int = 60, pe
         "ticker_b": b,
         "metric": "breakpoints",
         "value": float(n_breaks),
+        # The date is the actionable output: "this pair's correlation broke in
+        # 2022-01" prompts a fundamentals check before trading the pair again.
+        "last_break_date": last_break_date,
         "window": window,
     }
 
@@ -102,7 +118,8 @@ def breakpoint(
     window: int = 60,
     n_jobs: int = -1,
 ) -> MetricResult:
-    """Number of changepoints in the rolling correlation series (via PELT/RBF)."""
+    """Number of changepoints in the rolling correlation series (via PELT/RBF),
+    plus the date of the most recent break."""
     rets = to_returns(prices)
     pair_list = list(candidate_pairs) if candidate_pairs is not None else list(pairs(list(rets.columns)))
     rows = parallel_pairs(_breakpoint_pair, pair_list, rets, n_jobs=n_jobs, window=window)

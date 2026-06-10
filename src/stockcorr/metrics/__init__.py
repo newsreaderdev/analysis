@@ -26,6 +26,7 @@ METRICS: dict[str, Callable] = {
     "covariance": linear.covariance,
     # cointegration
     "coint": cointegration.engle_granger,
+    "coint_stability": cointegration.stability,
     "johansen": cointegration.johansen,
     "half_life": cointegration.half_life,
     "hurst": cointegration.hurst,
@@ -35,6 +36,7 @@ METRICS: dict[str, Callable] = {
     "dtw": lead_lag.dtw,
     # factor
     "beta": factor.beta_vs_index,
+    "rolling_beta": factor.rolling_beta,
     "residual_corr": factor.residual_correlation,
     "downside_beta": factor.downside_beta,
     # vol / tail
@@ -56,7 +58,7 @@ METRICS: dict[str, Callable] = {
 
 # Metrics that benefit from a pre-filter (per-pair, computationally heavy)
 PREFILTERABLE = {
-    "coint", "johansen", "half_life", "hurst",
+    "coint", "coint_stability", "johansen", "half_life", "hurst",
     "granger", "dtw",
     "tail_dep", "dcc",
     "mutual_info", "distance_corr",

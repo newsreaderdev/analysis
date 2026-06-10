@@ -3,6 +3,11 @@
 Engle-Granger and Johansen are per-pair tests; we run them in parallel and (by default)
 only against pairs that survived a Pearson pre-filter to keep the work manageable on
 500+ ticker universes.
+
+Multiple-testing note: scanning ~190k pairs at the 5% level yields thousands of
+false positives by chance. Engle-Granger output therefore carries FDR-adjusted
+p-values (Benjamini-Hochberg) alongside the raw ones -- screen on `significant_fdr`,
+not on `p_value`, when scanning large universes.
 """
 
 from __future__ import annotations
@@ -21,24 +26,33 @@ from stockcorr.parallel import parallel_pairs
 
 
 def _engle_granger_pair(a: str, b: str, prices: pd.DataFrame) -> dict | None:
+    """Engle-Granger in both regression directions; keep the stronger one.
+
+    coint(A, B) and coint(B, A) differ because the OLS hedge regression is
+    direction-dependent; testing only one direction misses pairs.
+    """
     s = prices[[a, b]].dropna()
     if len(s) < 100:
         return None
-    try:
-        t_stat, p_value, _ = coint(s[a].values, s[b].values)
-        # OLS hedge ratio: a = α + β·b
-        ols = OLS(s[a].values, add_constant(s[b].values)).fit()
-        beta = float(ols.params[1])
-    except Exception:
-        return None
-    return {
-        "ticker_a": a,
-        "ticker_b": b,
-        "metric": "coint",
-        "value": float(t_stat),
-        "p_value": float(p_value),
-        "hedge_ratio": beta,
-    }
+    best = None
+    for y, x in ((a, b), (b, a)):
+        try:
+            t_stat, p_value, _ = coint(s[y].values, s[x].values)
+            ols = OLS(s[y].values, add_constant(s[x].values)).fit()
+            beta = float(ols.params[1])
+        except Exception:
+            continue
+        if best is None or p_value < best["p_value"]:
+            best = {
+                "ticker_a": a,
+                "ticker_b": b,
+                "metric": "coint",
+                "value": float(t_stat),
+                "p_value": float(p_value),
+                "hedge_ratio": beta,
+                "direction": f"{y}~{x}",
+            }
+    return best
 
 
 def engle_granger(
@@ -46,14 +60,62 @@ def engle_granger(
     candidate_pairs: Iterable[tuple[str, str]] | None = None,
     n_jobs: int = -1,
 ) -> MetricResult:
-    """Engle-Granger two-step cointegration test for each candidate pair."""
+    """Engle-Granger two-step cointegration test for each candidate pair.
+
+    Output includes `p_value_fdr` / `significant_fdr` (Benjamini-Hochberg at 5%).
+    """
     pair_list = list(candidate_pairs) if candidate_pairs is not None else list(pairs(list(prices.columns)))
     rows = parallel_pairs(_engle_granger_pair, pair_list, prices, n_jobs=n_jobs)
     rows = [r for r in rows if r is not None]
     df = pd.DataFrame(rows) if rows else pd.DataFrame(
-        columns=["ticker_a", "ticker_b", "metric", "value", "p_value", "hedge_ratio"]
+        columns=["ticker_a", "ticker_b", "metric", "value", "p_value", "hedge_ratio", "direction"]
     )
+    if len(df) > 1:
+        from statsmodels.stats.multitest import multipletests
+
+        rej, p_adj, _, _ = multipletests(df["p_value"].values, alpha=0.05, method="fdr_bh")
+        df["p_value_fdr"] = p_adj
+        df["significant_fdr"] = rej
     return MetricResult(df, meta={"n_pairs": len(pair_list)})
+
+
+def _stability_pair(a: str, b: str, prices: pd.DataFrame) -> dict | None:
+    """Split-half cointegration stability: test each half of the sample separately.
+
+    Pairs cointegrated over the full sample but not in both halves are prone to
+    regime breaks -- the most common pairs-trading backtest trap.
+    """
+    s = prices[[a, b]].dropna()
+    if len(s) < 300:
+        return None
+    half = len(s) // 2
+    try:
+        p_first = float(coint(s[a].values[:half], s[b].values[:half])[1])
+        p_second = float(coint(s[a].values[half:], s[b].values[half:])[1])
+    except Exception:
+        return None
+    return {
+        "ticker_a": a,
+        "ticker_b": b,
+        "metric": "coint_stability",
+        "value": max(p_first, p_second),
+        "p_first_half": p_first,
+        "p_second_half": p_second,
+        "stable": bool(p_first < 0.10 and p_second < 0.10),
+    }
+
+
+def stability(
+    prices: pd.DataFrame,
+    candidate_pairs: Iterable[tuple[str, str]] | None = None,
+    n_jobs: int = -1,
+) -> MetricResult:
+    """Split-half Engle-Granger stability check. `value` = worse of the two half-sample p-values."""
+    pair_list = list(candidate_pairs) if candidate_pairs is not None else list(pairs(list(prices.columns)))
+    rows = parallel_pairs(_stability_pair, pair_list, prices, n_jobs=n_jobs)
+    rows = [r for r in rows if r is not None]
+    df = pd.DataFrame(rows) if rows else pd.DataFrame()
+    return MetricResult(df)
 
 
 def _johansen_pair(a: str, b: str, prices: pd.DataFrame) -> dict | None:
@@ -103,6 +165,9 @@ def _half_life_pair(a: str, b: str, prices: pd.DataFrame) -> dict | None:
         if beta >= 0:
             return None  # not mean reverting
         hl = -np.log(2) / beta
+        mu = float(spread.mean())
+        sigma = float(spread.std())
+        z = float((spread[-1] - mu) / sigma) if sigma > 0 else float("nan")
     except Exception:
         return None
     return {
@@ -111,6 +176,11 @@ def _half_life_pair(a: str, b: str, prices: pd.DataFrame) -> dict | None:
         "metric": "half_life",
         "value": float(hl),
         "hedge_ratio": float(ols.params[1]),
+        # OU parameters + current z-score: everything needed for an entry decision
+        "kappa": float(-beta),
+        "spread_mean": mu,
+        "spread_std": sigma,
+        "z_score": z,
     }
 
 
@@ -127,7 +197,11 @@ def half_life(
 
 
 def _hurst_series(ts: np.ndarray, min_lag: int = 2, max_lag: int = 100) -> float:
-    """R/S-style Hurst exponent via variance of lagged differences."""
+    """Hurst exponent via scaling of lagged-difference dispersion.
+
+    Simple and fast; mildly biased on short series. For research-grade estimates
+    consider DFA (e.g. the `nolds` package).
+    """
     if len(ts) < max_lag * 2:
         max_lag = max(min_lag + 5, len(ts) // 4)
     lags = range(min_lag, max_lag)

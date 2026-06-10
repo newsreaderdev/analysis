@@ -8,6 +8,11 @@ import pandas as pd
 
 from stockcorr.metrics import METRICS, MetricResult, PREFILTERABLE, pairs
 
+# Metrics that take a benchmark; beta-style ones need a single Series,
+# residual_corr accepts a multi-factor DataFrame.
+_SERIES_BENCHMARK_METRICS = {"beta", "rolling_beta", "downside_beta"}
+_FRAME_BENCHMARK_METRICS = {"residual_corr"}
+
 
 def _filter_pairs_by(
     long_df: pd.DataFrame,
@@ -25,14 +30,35 @@ def _filter_pairs_by(
     return list(zip(out["ticker_a"].tolist(), out["ticker_b"].tolist()))
 
 
+def _annotate_adr(df: pd.DataFrame) -> pd.DataFrame:
+    """Flag rows where either leg is an ADR.
+
+    Lead-lag and cross-correlation involving ADRs are often timezone artifacts:
+    an Asian or European ADR's US close reflects its home market's *previous*
+    session, so an apparent one-day lead may carry no tradeable information.
+    """
+    try:
+        from stockcorr.data.universe import top_adrs
+
+        adr_set = set(top_adrs()["ticker"])
+    except Exception:
+        return df
+    if df.empty or "ticker_a" not in df.columns:
+        return df
+    df = df.copy()
+    df["has_adr"] = df["ticker_a"].isin(adr_set) | df["ticker_b"].isin(adr_set)
+    return df
+
+
 def run_metrics(
     prices: pd.DataFrame,
     metrics: Iterable[str],
     prefilter: dict | None = None,
-    benchmark: pd.Series | None = None,
+    benchmark: pd.Series | pd.DataFrame | None = None,
     regime: pd.Series | None = None,
     n_jobs: int = -1,
     metric_kwargs: dict[str, dict] | None = None,
+    annotate_adr: bool = True,
 ) -> pd.DataFrame:
     """Run the requested metrics, optionally pre-filtering candidate pairs.
 
@@ -42,9 +68,12 @@ def run_metrics(
     metrics : list of metric names from `stockcorr.metrics.METRICS`
     prefilter : {"metric": "pearson", "min_abs_value": 0.7} -- compute the named metric first,
         then only pass surviving pairs into the prefilterable downstream metrics
-    benchmark : optional benchmark price series (required for beta/residual_corr/downside_beta)
+    benchmark : benchmark price series, or a DataFrame of several factor price
+        series (market + sector ETFs). Beta-style metrics use the first column;
+        residual_corr regresses on all of them jointly.
     regime : optional regime label series (required for regime_corr)
     n_jobs : parallelism for per-pair metrics
+    annotate_adr : add a `has_adr` flag so timezone-artifact lead-lags are visible
 
     Returns
     -------
@@ -52,6 +81,16 @@ def run_metrics(
     """
     metric_kwargs = metric_kwargs or {}
     metrics = list(metrics)
+
+    bench_series: pd.Series | None = None
+    bench_frame: pd.DataFrame | None = None
+    if benchmark is not None:
+        if isinstance(benchmark, pd.DataFrame):
+            bench_frame = benchmark
+            bench_series = benchmark.iloc[:, 0]
+        else:
+            bench_series = benchmark
+            bench_frame = benchmark.to_frame(benchmark.name or "benchmark")
 
     candidate_pairs: list[tuple[str, str]] | None = None
     prefilter_result: pd.DataFrame | None = None
@@ -85,10 +124,14 @@ def run_metrics(
             kwargs.setdefault("candidate_pairs", candidate_pairs)
         if name in PREFILTERABLE and "n_jobs" in fn.__code__.co_varnames:
             kwargs.setdefault("n_jobs", n_jobs)
-        if name in {"beta", "residual_corr", "downside_beta"}:
-            if benchmark is None:
+        if name in _SERIES_BENCHMARK_METRICS:
+            if bench_series is None:
                 raise ValueError(f"Metric '{name}' requires a `benchmark` series")
-            kwargs.setdefault("benchmark", benchmark)
+            kwargs.setdefault("benchmark", bench_series)
+        if name in _FRAME_BENCHMARK_METRICS:
+            if bench_frame is None:
+                raise ValueError(f"Metric '{name}' requires a `benchmark`")
+            kwargs.setdefault("benchmark", bench_frame)
         if name == "regime_corr":
             if regime is None:
                 raise ValueError("regime_corr requires a `regime` series")
@@ -99,4 +142,7 @@ def run_metrics(
 
     if not out_frames:
         return pd.DataFrame(columns=["ticker_a", "ticker_b", "metric", "value"])
-    return pd.concat(out_frames, ignore_index=True, sort=False)
+    out = pd.concat(out_frames, ignore_index=True, sort=False)
+    if annotate_adr:
+        out = _annotate_adr(out)
+    return out

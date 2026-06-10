@@ -54,7 +54,16 @@ def analyze(
     start: str = typer.Option(..., "--start"),
     end: str = typer.Option(..., "--end"),
     prefilter: str = typer.Option(None, "--prefilter", help="e.g. pearson:0.7"),
-    benchmark: str = typer.Option(None, "--benchmark", help="ticker symbol for beta/residual metrics"),
+    benchmark: str = typer.Option(
+        None, "--benchmark",
+        help="benchmark ticker(s), comma-separated; first is used for beta, "
+             "all jointly for residual_corr (e.g. SPY,XLK,XLF)",
+    ),
+    regime: str = typer.Option(
+        None, "--regime",
+        help="regime spec 'TICKER:threshold', e.g. '^VIX:20' labels days high/low "
+             "by the ticker's close level (required for regime_corr)",
+    ),
     out: Path = typer.Option(Path("results.parquet"), "--out"),
     n_jobs: int = typer.Option(-1, "--n-jobs"),
     interval: str = typer.Option("1d", "--interval"),
@@ -70,15 +79,30 @@ def analyze(
     panel = src.close_panel(tlist, start, end, interval=interval)
     typer.echo(f"Panel: {panel.shape}")
 
-    bench_series = None
+    bench: pd.Series | pd.DataFrame | None = None
     if benchmark:
-        bench_panel = src.close_panel([benchmark], start, end, interval=interval)
-        if bench_panel.shape[1]:
-            bench_series = bench_panel.iloc[:, 0].rename(benchmark)
+        bench_tickers = [t.strip() for t in benchmark.split(",") if t.strip()]
+        bench_panel = src.close_panel(bench_tickers, start, end, interval=interval)
+        if bench_panel.shape[1] == 1:
+            bench = bench_panel.iloc[:, 0].rename(bench_tickers[0])
+        elif bench_panel.shape[1] > 1:
+            bench = bench_panel
+
+    regime_series = None
+    if regime:
+        r_ticker, _, r_thresh = regime.partition(":")
+        if not r_thresh:
+            raise typer.BadParameter(f"--regime must be 'TICKER:threshold', got '{regime}'")
+        regime_panel = src.close_panel([r_ticker.strip()], start, end, interval=interval)
+        if regime_panel.shape[1]:
+            level = regime_panel.iloc[:, 0]
+            regime_series = level.gt(float(r_thresh)).map({True: "high", False: "low"})
 
     pf = _parse_prefilter(prefilter)
     typer.echo(f"Running metrics: {metric_list} (prefilter={pf}) ...")
-    results = run_metrics(panel, metric_list, prefilter=pf, benchmark=bench_series, n_jobs=n_jobs)
+    results = run_metrics(
+        panel, metric_list, prefilter=pf, benchmark=bench, regime=regime_series, n_jobs=n_jobs
+    )
     out.parent.mkdir(parents=True, exist_ok=True)
     results.to_parquet(out)
     typer.echo(f"Wrote {len(results)} rows -> {out}")

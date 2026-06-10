@@ -2,43 +2,88 @@
 
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 import pandas as pd
-from scipy import stats
 
 from stockcorr.metrics.base import MetricResult, symmetric_matrix_to_long, to_returns
 
 
-def pearson(prices: pd.DataFrame, returns: bool = True) -> MetricResult:
-    """Pearson correlation across all pairs. Vectorized."""
+def pearson(prices: pd.DataFrame, returns: bool = True, shrinkage: bool = False) -> MetricResult:
+    """Pearson correlation across all pairs. Vectorized.
+
+    `shrinkage=True` applies Ledoit-Wolf shrinkage before converting to
+    correlation -- recommended when the matrix feeds portfolio optimization,
+    because the raw 500x500 sample estimate is noise-dominated.
+    """
     data = to_returns(prices) if returns else prices
-    mat = data.corr(method="pearson")
+    if shrinkage:
+        from sklearn.covariance import LedoitWolf
+
+        clean = data.dropna()
+        lw = LedoitWolf().fit(clean.values)
+        d = np.sqrt(np.diag(lw.covariance_))
+        corr = lw.covariance_ / np.outer(d, d)
+        mat = pd.DataFrame(corr, index=data.columns, columns=data.columns)
+    else:
+        mat = data.corr(method="pearson")
     long = symmetric_matrix_to_long(mat, "pearson")
-    return MetricResult(long, meta={"returns": returns, "n_obs": int(data.shape[0])})
+    return MetricResult(long, meta={"returns": returns, "shrinkage": shrinkage, "n_obs": int(data.shape[0])})
 
 
 def spearman(prices: pd.DataFrame, returns: bool = True) -> MetricResult:
+    """Spearman rank correlation with pairwise NaN handling.
+
+    Columns are rank-transformed once, then Pearson is computed pairwise --
+    this avoids dropping an entire date row whenever any single ticker is
+    missing (which devastates sample size on large mixed-history universes).
+    """
     data = to_returns(prices) if returns else prices
-    # scipy returns the full matrix in one call -- much faster than per-pair
-    arr = data.dropna().to_numpy()
-    if arr.shape[0] < 5:
+    if data.shape[0] < 5:
         return MetricResult(pd.DataFrame(columns=["ticker_a", "ticker_b", "metric", "value"]))
-    rho, _ = stats.spearmanr(arr, axis=0)
-    mat = pd.DataFrame(np.atleast_2d(rho), index=data.columns, columns=data.columns)
+    ranked = data.rank()
+    mat = ranked.corr(method="pearson")
     long = symmetric_matrix_to_long(mat, "spearman")
     return MetricResult(long, meta={"returns": returns})
 
 
 def kendall(prices: pd.DataFrame, returns: bool = True) -> MetricResult:
-    """Kendall tau. O(n^2 log n) per pair -- slow for >200 tickers."""
+    """Kendall tau. O(n^2 log n) per pair -- impractical above ~200 tickers."""
     data = to_returns(prices) if returns else prices
+    if data.shape[1] > 200:
+        warnings.warn(
+            f"Kendall tau over {data.shape[1]} tickers is extremely slow "
+            "(O(n^2 log n) per pair); Spearman carries nearly the same "
+            "information and computes in seconds.",
+            stacklevel=2,
+        )
     mat = data.corr(method="kendall")
     long = symmetric_matrix_to_long(mat, "kendall")
     return MetricResult(long, meta={"returns": returns})
 
 
-def covariance(prices: pd.DataFrame, returns: bool = True) -> MetricResult:
+def covariance(
+    prices: pd.DataFrame,
+    returns: bool = True,
+    annualize: bool = True,
+    shrinkage: bool = False,
+) -> MetricResult:
+    """Covariance of daily returns, annualized (x252) by default.
+
+    `shrinkage=True` uses Ledoit-Wolf -- the standard input for Markowitz-style
+    optimization on large universes.
+    """
     data = to_returns(prices) if returns else prices
-    mat = data.cov()
+    if shrinkage:
+        from sklearn.covariance import LedoitWolf
+
+        clean = data.dropna()
+        lw = LedoitWolf().fit(clean.values)
+        mat = pd.DataFrame(lw.covariance_, index=data.columns, columns=data.columns)
+    else:
+        mat = data.cov()
+    if annualize and returns:
+        mat = mat * 252
     long = symmetric_matrix_to_long(mat, "covariance")
-    return MetricResult(long, meta={"returns": returns})
+    return MetricResult(long, meta={"returns": returns, "annualized": annualize and returns, "shrinkage": shrinkage})

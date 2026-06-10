@@ -33,6 +33,35 @@ def test_cointegration_detects_known_pair(rng):
     assert len(res.df) == 1
     row = res.df.iloc[0]
     assert row["p_value"] < 0.05
+    # Bidirectional testing records which regression direction won
+    assert row["direction"] in ("X~Y", "Y~X")
+
+
+def test_fdr_correction_applied(rng):
+    """With several pairs, FDR-adjusted p-values must be present and >= raw."""
+    frames = {}
+    for i in range(4):
+        x, y = _make_cointegrated_pair(rng)
+        frames[f"A{i}"] = x
+        frames[f"B{i}"] = y
+    dates = pd.bdate_range("2018-01-01", periods=1500)
+    df = pd.DataFrame(frames, index=dates)
+    res = cointegration.engle_granger(df, n_jobs=1)
+    assert "p_value_fdr" in res.df.columns
+    assert "significant_fdr" in res.df.columns
+    assert (res.df["p_value_fdr"] >= res.df["p_value"] - 1e-12).all()
+
+
+def test_stability_split_half(rng):
+    x, y = _make_cointegrated_pair(rng, n=2000)
+    dates = pd.bdate_range("2018-01-01", periods=len(x))
+    df = pd.DataFrame({"X": x, "Y": y}, index=dates)
+    res = cointegration.stability(df, n_jobs=1)
+    assert len(res.df) == 1
+    row = res.df.iloc[0]
+    assert {"p_first_half", "p_second_half", "stable"}.issubset(res.df.columns)
+    # A genuinely cointegrated pair should be stable across halves
+    assert row["stable"]
 
 
 def test_cointegration_rejects_independent_pair(rng):
@@ -54,9 +83,14 @@ def test_half_life_recoverable(rng):
     df = pd.DataFrame({"X": x, "Y": y}, index=dates)
     res = cointegration.half_life(df, n_jobs=1)
     assert len(res.df) == 1
-    hl = res.df.iloc[0]["value"]
+    row = res.df.iloc[0]
+    hl = row["value"]
     # generous tolerance because the AR(1) regression has noise
     assert 0.3 * expected < hl < 3 * expected, f"hl={hl}, expected≈{expected}"
+    # OU parameters + entry signal must be present
+    assert {"kappa", "spread_mean", "spread_std", "z_score"}.issubset(res.df.columns)
+    assert row["kappa"] > 0
+    assert np.isfinite(row["z_score"])
 
 
 def test_hurst_for_mean_reverting_spread_is_below_half(rng):

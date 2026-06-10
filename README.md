@@ -10,14 +10,23 @@ Relationship categories covered:
 
 | Category | Metrics |
 |----------|---------|
-| Linear | Pearson, Spearman, Kendall, covariance |
-| Cointegration / spread | Engle-Granger, Johansen, half-life, Hurst |
-| Lead-lag | Cross-correlation at lags, Granger causality, DTW |
-| Factor | Beta vs index, residual correlation, sector correlation |
-| Volatility / tail | DCC-GARCH, tail dependence, downside beta |
-| Nonlinear | Mutual information, distance correlation |
-| Time-varying | Rolling correlation, regime correlation, breakpoint |
-| Alternative | Gatev distance (normalized price), hierarchical clustering |
+| Linear | Pearson (optional Ledoit-Wolf shrinkage), Spearman, Kendall, annualized covariance |
+| Cointegration / spread | Engle-Granger (bidirectional, FDR-adjusted), split-half stability, Johansen, half-life (+ OU params & entry z-score), Hurst |
+| Lead-lag | Vectorized cross-correlation at lags, Granger causality (fast F-test, FDR-adjusted), DTW (Sakoe-Chiba window, batch C path) |
+| Factor | Beta, rolling beta, multi-factor residual correlation (market + sector ETFs), downside/upside beta asymmetry |
+| Volatility / tail | DCC-GARCH (QMLE grid, correlation path summary), tail dependence (+ CI), non-overlapping vol correlation |
+| Nonlinear | Mutual information (correlation-comparable scale), distance correlation (+ nonlinearity gap) |
+| Time-varying | Rolling correlation (+ `stable` screen), regime correlation, breakpoint detection (+ last break date) |
+| Alternative | Gatev distance (formation window), hierarchical clustering (auto cluster count) |
+
+Practical guardrails baked in:
+
+- **FDR correction** (Benjamini-Hochberg) on cointegration and Granger scans — at ~190k pairs,
+  raw 5% p-values produce thousands of false positives; screen on `significant_fdr` instead.
+- **`has_adr` flag** on every pair row — lead-lag involving ADRs is often a timezone artifact
+  (the ADR's US close reflects its home market's previous session).
+- **`z_score` / `kappa` / `spread_std`** on half-life output — everything needed for an
+  entry decision without recomputing the spread.
 
 ## Quick start
 
@@ -29,10 +38,16 @@ stockcorr fetch --tickers sp500 --start 2020-01-01 --end 2024-12-31
 
 # Analyze with a Pearson pre-filter feeding cointegration
 stockcorr analyze --tickers sp500 \
-    --metrics pearson,coint,half_life \
+    --metrics pearson,coint,coint_stability,half_life \
     --start 2020-01-01 --end 2024-12-31 \
     --prefilter pearson:0.7 \
     --out results.parquet
+
+# Multi-factor residual correlation (market + sector ETFs) and VIX regimes
+stockcorr analyze --tickers sp500 \
+    --metrics residual_corr,regime_corr \
+    --benchmark SPY,XLK,XLF --regime '^VIX:20' \
+    --start 2020-01-01 --end 2024-12-31 --out results.parquet
 
 # Visualize
 stockcorr plot heatmap --input results.parquet --metric pearson --out heatmap.png
