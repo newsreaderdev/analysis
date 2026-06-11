@@ -108,6 +108,92 @@ def analyze(
     typer.echo(f"Wrote {len(results)} rows -> {out}")
 
 
+@app.command()
+def screen(
+    tickers: str = typer.Option(None, "--tickers", help="sp500 | ndx | adr100 | all | A,B,C | @file.txt"),
+    start: str = typer.Option(None, "--start"),
+    end: str = typer.Option(None, "--end"),
+    input_csv: Path = typer.Option(
+        None, "--input-csv",
+        help="offline mode: wide CSV (first column = date, one column per ticker) "
+             "used instead of fetching from the data source",
+    ),
+    prefilter_threshold: float = typer.Option(0.65, "--prefilter-threshold", help="|Pearson| floor"),
+    max_p: float = typer.Option(0.05, "--max-p", help="Engle-Granger raw p-value gate"),
+    use_fdr: bool = typer.Option(False, "--use-fdr", help="gate on FDR-5% instead of raw p (strict)"),
+    half_life_min: float = typer.Option(5.0, "--half-life-min"),
+    half_life_max: float = typer.Option(60.0, "--half-life-max"),
+    max_hurst: float = typer.Option(0.5, "--max-hurst"),
+    min_roll_corr: float = typer.Option(0.6, "--min-roll-corr"),
+    max_roll_corr_std: float = typer.Option(0.20, "--max-roll-corr-std"),
+    top: int = typer.Option(20, "--top", help="finalists to print"),
+    out: Path = typer.Option(Path("recommended_pairs.csv"), "--out"),
+    n_jobs: int = typer.Option(-1, "--n-jobs"),
+    interval: str = typer.Option("1d", "--interval"),
+):
+    """Run the full pairs-trading screening funnel and write a candidate list.
+
+    Funnel: Pearson prefilter -> Engle-Granger (+FDR) -> split-half stability
+    -> half-life window -> Hurst -> rolling-correlation stability.
+    """
+    from stockcorr.screen import screen_pairs
+
+    if input_csv is not None:
+        panel = pd.read_csv(input_csv, index_col=0, parse_dates=True).sort_index()
+        typer.echo(f"Loaded local panel: {panel.shape[0]} dates x {panel.shape[1]} tickers")
+    else:
+        if not (tickers and start and end):
+            raise typer.BadParameter("either --input-csv or all of --tickers/--start/--end are required")
+        from stockcorr.data import YFinanceSource
+
+        tlist = _resolve(tickers)
+        typer.echo(f"Fetching {len(tlist)} tickers ...")
+        panel = YFinanceSource().close_panel(tlist, start, end, interval=interval)
+        typer.echo(f"Panel: {panel.shape}")
+
+    sectors = None
+    try:
+        from stockcorr.data.universe import union_universe
+
+        meta = union_universe()
+        sectors = meta.set_index("ticker")["sector"]
+    except Exception:
+        pass
+
+    result = screen_pairs(
+        panel,
+        prefilter_threshold=prefilter_threshold,
+        max_p_value=max_p,
+        use_fdr=use_fdr,
+        half_life_range=(half_life_min, half_life_max),
+        max_hurst=max_hurst,
+        min_roll_corr=min_roll_corr,
+        max_roll_corr_std=max_roll_corr_std,
+        sectors=sectors,
+        n_jobs=n_jobs,
+    )
+
+    typer.echo("")
+    typer.echo(result.summary())
+    typer.echo("")
+    if result.finalists.empty:
+        typer.echo("No pairs survived the funnel. Try a lower --prefilter-threshold, "
+                   "a wider half-life window, or check the sample length (>= 2y recommended).")
+    else:
+        show_cols = [c for c in ["ticker_a", "ticker_b", "sector_a", "p_value", "p_value_fdr",
+                                 "hedge_ratio", "half_life_days", "z_score", "hurst",
+                                 "roll_corr_mean"] if c in result.finalists.columns]
+        typer.echo(f"Top {min(top, len(result.finalists))} of {len(result.finalists)} finalists:")
+        typer.echo(result.finalists.head(top)[show_cols].round(4).to_string(index=False))
+
+    out.parent.mkdir(parents=True, exist_ok=True)
+    result.finalists.to_csv(out, index=False)
+    full_out = out.with_name(out.stem + "_full_table.csv")
+    result.table.to_csv(full_out, index=False)
+    typer.echo(f"\nFinalists -> {out}")
+    typer.echo(f"Full candidate table -> {full_out}")
+
+
 @plot_app.command("heatmap")
 def plot_heatmap_cmd(
     input: Path = typer.Option(..., "--input"),

@@ -33,6 +33,15 @@ Practical guardrails baked in:
 ```bash
 pip install -e .
 
+# One-command pairs-trading screen (the full funnel):
+#   Pearson prefilter -> Engle-Granger (+FDR) -> split-half stability
+#   -> half-life window -> Hurst -> rolling-corr stability
+stockcorr screen --tickers sp500 --start 2020-01-01 --end 2024-12-31 \
+    --out recommended_pairs.csv
+
+# Offline mode: screen a local wide CSV (first column = date, one column per ticker)
+stockcorr screen --input-csv panel.csv --out recommended_pairs.csv
+
 # Fetch and cache prices
 stockcorr fetch --tickers sp500 --start 2020-01-01 --end 2024-12-31
 
@@ -65,16 +74,30 @@ stockcorr pairs top --input results.parquet --metric coint --n 20
 from stockcorr.data import YFinanceSource
 from stockcorr.pipeline import run_metrics
 from stockcorr.data.universe import union_universe
+from stockcorr.screen import screen_pairs
 
 src = YFinanceSource()
-tickers = union_universe()                      # SP500 ∪ NDX ∪ ADR100
+tickers = union_universe()["ticker"].tolist()   # SP500 ∪ NDX ∪ ADR100
 prices = src.close_panel(tickers, "2020-01-01", "2024-12-31")
+
+# Individual metrics
 results = run_metrics(
     prices,
     metrics=["pearson", "coint", "half_life"],
     prefilter={"metric": "pearson", "min_abs_value": 0.7},
 )
+
+# Or the whole screening funnel in one call
+scr = screen_pairs(prices, prefilter_threshold=0.65)
+print(scr.summary())          # stage-by-stage survivor counts
+scr.finalists                 # pairs with hedge_ratio, half_life, z_score, ...
 ```
+
+Funnel design note: the default gate is raw `p < 0.05` **plus** split-half
+stability (both half-samples independently cointegrated at 10%) rather than
+strict FDR-5%, which routinely leaves zero pairs on real universes. Pass
+`use_fdr=True` (CLI: `--use-fdr`) for the strict variant; FDR p-values are
+always included in the output either way.
 
 ## Notebook
 
