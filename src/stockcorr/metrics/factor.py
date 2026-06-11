@@ -18,6 +18,27 @@ def _factor_frame(benchmark: pd.Series | pd.DataFrame) -> pd.DataFrame:
     return bench
 
 
+def residual_returns(prices: pd.DataFrame, benchmark: pd.Series | pd.DataFrame) -> pd.DataFrame:
+    """Log-returns with factor exposure removed (joint OLS on all factors).
+
+    Shared by residual_correlation and residual-based clustering. Returns an
+    empty frame when fewer than 60 aligned observations are available.
+    """
+    rets = to_returns(prices)
+    fac_prices = _factor_frame(benchmark)
+    fac_rets = to_returns(fac_prices)
+    aligned = rets.join(fac_rets, how="inner").dropna()
+    fac_cols = list(fac_rets.columns)
+    F = aligned[fac_cols].to_numpy()
+    if F.shape[0] < 60:
+        return pd.DataFrame()
+    X = np.column_stack([np.ones(len(F)), F])
+    R = aligned[rets.columns].to_numpy()
+    coef, *_ = np.linalg.lstsq(X, R, rcond=None)
+    resid = R - X @ coef
+    return pd.DataFrame(resid, index=aligned.index, columns=rets.columns)
+
+
 def beta_vs_index(prices: pd.DataFrame, benchmark: pd.Series) -> MetricResult:
     """Beta of each ticker against a benchmark price series.
 
@@ -80,22 +101,13 @@ def residual_correlation(prices: pd.DataFrame, benchmark: pd.Series | pd.DataFra
     market AND the financials sector; removing both isolates the truly
     idiosyncratic co-movement.
     """
-    rets = to_returns(prices)
-    fac_prices = _factor_frame(benchmark)
-    fac_rets = to_returns(fac_prices)
-    aligned = rets.join(fac_rets, how="inner").dropna()
-    fac_cols = list(fac_rets.columns)
-    F = aligned[fac_cols].to_numpy()
-    if F.shape[0] < 60:
+    resid_df = residual_returns(prices, benchmark)
+    if resid_df.empty:
         return MetricResult(pd.DataFrame())
-    X = np.column_stack([np.ones(len(F)), F])
-    R = aligned[rets.columns].to_numpy()
-    coef, *_ = np.linalg.lstsq(X, R, rcond=None)
-    resid = R - X @ coef
-    resid_df = pd.DataFrame(resid, index=aligned.index, columns=rets.columns)
     mat = resid_df.corr()
     long = symmetric_matrix_to_long(mat, "residual_corr")
-    return MetricResult(long, meta={"n_factors": len(fac_cols)})
+    n_factors = 1 if isinstance(benchmark, pd.Series) else benchmark.shape[1]
+    return MetricResult(long, meta={"n_factors": n_factors})
 
 
 def downside_beta(prices: pd.DataFrame, benchmark: pd.Series) -> MetricResult:

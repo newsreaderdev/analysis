@@ -37,6 +37,7 @@ def hierarchical_cluster(
     prices: pd.DataFrame,
     n_clusters: int | None = None,
     method: str = "average",
+    benchmark: pd.Series | pd.DataFrame | None = None,
 ) -> MetricResult:
     """Cluster tickers via agglomerative linkage on (1 - |corr|) distance.
 
@@ -44,13 +45,28 @@ def hierarchical_cluster(
     score over k in [2, 15]. Output is per-ticker (ticker_b = '_CLUSTER_')
     with `value` = cluster id.
 
+    When `benchmark` is given (market index, optionally plus sector ETFs),
+    clustering runs on *residual* correlation instead of raw correlation.
+    On a real universe the market factor dominates raw correlations -- every
+    stock co-moves with SPY, so raw-corr clustering tends to collapse into one
+    giant blob. Removing the common factors first lets the structure that
+    matters (sector, supply-chain, thematic links) drive the clusters.
+
     Practical use: pairs within a cluster have elevated cointegration odds;
     tickers that cluster together *across* GICS sectors often share a hidden
     supply-chain or thematic link.
     """
     from stockcorr.metrics.base import to_returns
 
-    rets = to_returns(prices)
+    if benchmark is not None:
+        from stockcorr.metrics.factor import residual_returns
+
+        rets = residual_returns(prices, benchmark)
+        if rets.empty:
+            rets = to_returns(prices)
+            benchmark = None
+    else:
+        rets = to_returns(prices)
     corr = rets.corr().abs().fillna(0)
     dist = (1 - corr).to_numpy(copy=True)
     np.fill_diagonal(dist, 0)
@@ -81,4 +97,8 @@ def hierarchical_cluster(
         "metric": "cluster",
         "value": labels.astype(float),
     })
-    return MetricResult(df, meta={"n_clusters": int(n_clusters), "linkage": method})
+    return MetricResult(df, meta={
+        "n_clusters": int(n_clusters),
+        "linkage": method,
+        "residual_based": benchmark is not None,
+    })

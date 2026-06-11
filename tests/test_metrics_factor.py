@@ -69,3 +69,19 @@ def test_downside_beta_asymmetry(factor_panel):
     res = factor.downside_beta(prices, bench).df
     assert {"upside_beta", "asymmetry"}.issubset(res.columns)
     assert res["value"].notna().all()
+
+
+def test_residual_clustering_separates_hidden_group(factor_panel):
+    """On a market-dominated panel, residual clustering should isolate T0/T1
+    (which share a hidden driver) from T2/T3 (market-only)."""
+    from stockcorr.metrics.alternative import hierarchical_cluster
+
+    prices, bench, sector_etf = factor_panel
+    factors = pd.concat([bench, sector_etf], axis=1)
+    res = hierarchical_cluster(prices, n_clusters=2, benchmark=factors)
+    labels = res.df.set_index("ticker_a")["value"]
+    assert res.meta["residual_based"]
+    # T0/T1 share the hidden idiosyncratic driver -> same cluster,
+    # separate from at least one of the market-only tickers
+    assert labels["T0"] == labels["T1"]
+    assert (labels["T2"] != labels["T0"]) or (labels["T3"] != labels["T0"])

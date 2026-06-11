@@ -12,6 +12,9 @@ from stockcorr.metrics import METRICS, MetricResult, PREFILTERABLE, pairs
 # residual_corr accepts a multi-factor DataFrame.
 _SERIES_BENCHMARK_METRICS = {"beta", "rolling_beta", "downside_beta"}
 _FRAME_BENCHMARK_METRICS = {"residual_corr"}
+# Metrics where a benchmark improves the result but is not required:
+# cluster switches from raw to residual correlation when factors are available.
+_OPTIONAL_BENCHMARK_METRICS = {"cluster"}
 
 
 def _filter_pairs_by(
@@ -131,6 +134,8 @@ def run_metrics(
         if name in _FRAME_BENCHMARK_METRICS:
             if bench_frame is None:
                 raise ValueError(f"Metric '{name}' requires a `benchmark`")
+            kwargs.setdefault("benchmark", bench_frame)
+        if name in _OPTIONAL_BENCHMARK_METRICS and bench_frame is not None:
             kwargs.setdefault("benchmark", bench_frame)
         if name == "regime_corr":
             if regime is None:
