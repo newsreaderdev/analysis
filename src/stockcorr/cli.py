@@ -194,6 +194,97 @@ def screen(
     typer.echo(f"Full candidate table -> {full_out}")
 
 
+@app.command()
+def backtest(
+    tickers: str = typer.Option(None, "--tickers"),
+    start: str = typer.Option(None, "--start"),
+    end: str = typer.Option(None, "--end"),
+    input_csv: Path = typer.Option(
+        None, "--input-csv",
+        help="offline mode: wide CSV (first column = date, one column per ticker)",
+    ),
+    pair: list[str] = typer.Option(
+        None, "--pair", help="pair as 'A,B'; repeat the flag for several pairs"),
+    pairs_csv: Path = typer.Option(
+        None, "--pairs-csv",
+        help="CSV with ticker_a/ticker_b columns (e.g. output of `stockcorr screen`)"),
+    formation: int = typer.Option(252, "--formation", help="trailing estimation window (days)"),
+    entry_z: float = typer.Option(2.0, "--entry-z"),
+    exit_z: float = typer.Option(0.5, "--exit-z"),
+    stop_z: float = typer.Option(3.5, "--stop-z"),
+    max_holding: int = typer.Option(None, "--max-holding",
+                                    help="time stop in days (default: 2x formation half-life)"),
+    cost_bps: float = typer.Option(5.0, "--cost-bps", help="per-side cost on gross notional"),
+    out: Path = typer.Option(Path("backtest_trades.csv"), "--out"),
+    plot: Path = typer.Option(None, "--plot", help="write equity-curve PNG here"),
+    interval: str = typer.Option("1d", "--interval"),
+):
+    """Walk-forward backtest of one or more pairs (entry/exit/stop/time rules).
+
+    Typical flow: `stockcorr screen ... --out pairs.csv` then
+    `stockcorr backtest --pairs-csv pairs.csv ...` on a LATER date range
+    (selecting and trading on the same window is look-ahead bias).
+    """
+    from stockcorr.backtest import backtest_pairs, plot_backtest
+
+    if input_csv is not None:
+        panel = pd.read_csv(input_csv, index_col=0, parse_dates=True).sort_index()
+        typer.echo(f"Loaded local panel: {panel.shape[0]} dates x {panel.shape[1]} tickers")
+    else:
+        if not (tickers and start and end):
+            raise typer.BadParameter("either --input-csv or all of --tickers/--start/--end are required")
+        from stockcorr.data import YFinanceSource
+
+        tlist = _resolve(tickers)
+        panel = YFinanceSource().close_panel(tlist, start, end, interval=interval)
+        typer.echo(f"Panel: {panel.shape}")
+
+    pair_list: list[tuple[str, str]] = []
+    if pairs_csv is not None:
+        pdf = pd.read_csv(pairs_csv)
+        pair_list += list(zip(pdf["ticker_a"], pdf["ticker_b"]))
+    for p in pair or []:
+        a, _, b = p.partition(",")
+        if not b:
+            raise typer.BadParameter(f"--pair must be 'A,B', got '{p}'")
+        pair_list.append((a.strip().upper(), b.strip().upper()))
+    if not pair_list:
+        raise typer.BadParameter("no pairs given: use --pair A,B and/or --pairs-csv file.csv")
+    pair_list = [(a, b) for a, b in pair_list if a in panel.columns and b in panel.columns]
+    typer.echo(f"Backtesting {len(pair_list)} pair(s) ...")
+
+    result = backtest_pairs(
+        panel, pair_list,
+        formation_window=formation, entry_z=entry_z, exit_z=exit_z,
+        stop_z=stop_z, max_holding_days=max_holding, cost_bps=cost_bps,
+    )
+    if not result.stats:
+        typer.echo("No backtest produced (not enough data after the formation window?)")
+        raise typer.Exit(1)
+
+    typer.echo("")
+    typer.echo("PORTFOLIO " + "=" * 50)
+    typer.echo(result.summary())
+    per_pair = result.stats.get("per_pair", {})
+    if len(per_pair) > 1:
+        typer.echo("")
+        typer.echo("PER PAIR " + "=" * 51)
+        rows = [{
+            "pair": k, "trades": v["n_trades"],
+            "win": f"{v['win_rate']:.0%}" if v["n_trades"] else "-",
+            "total": f"{v['total_return']:+.2%}", "sharpe": f"{v['sharpe']:.2f}",
+            "maxDD": f"{v['max_drawdown']:.1%}",
+        } for k, v in per_pair.items()]
+        typer.echo(pd.DataFrame(rows).to_string(index=False))
+
+    out.parent.mkdir(parents=True, exist_ok=True)
+    result.trades.to_csv(out, index=False)
+    typer.echo(f"\nTrades -> {out}")
+    if plot is not None:
+        plot_backtest(result, out=plot)
+        typer.echo(f"Equity curve -> {plot}")
+
+
 @plot_app.command("heatmap")
 def plot_heatmap_cmd(
     input: Path = typer.Option(..., "--input"),
