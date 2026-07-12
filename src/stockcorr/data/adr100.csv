@@ -1,0 +1,104 @@
+ticker,name,sector,country
+TSM,Taiwan Semiconductor Manufacturing,Information Technology,Taiwan
+NVO,Novo Nordisk A/S,Health Care,Denmark
+ASML,ASML Holding NV,Information Technology,Netherlands
+TM,Toyota Motor Corp.,Consumer Discretionary,Japan
+AZN,AstraZeneca PLC,Health Care,United Kingdom
+SAP,SAP SE,Information Technology,Germany
+SHEL,Shell PLC,Energy,United Kingdom
+HSBC,HSBC Holdings PLC,Financials,United Kingdom
+NVS,Novartis AG,Health Care,Switzerland
+BABA,Alibaba Group Holding,Consumer Discretionary,China
+BHP,BHP Group Ltd,Materials,Australia
+BUD,Anheuser-Busch InBev,Consumer Staples,Belgium
+RIO,Rio Tinto PLC,Materials,United Kingdom
+SONY,Sony Group Corp.,Consumer Discretionary,Japan
+UL,Unilever PLC,Consumer Staples,United Kingdom
+TTE,TotalEnergies SE,Energy,France
+BP,BP PLC,Energy,United Kingdom
+DEO,Diageo PLC,Consumer Staples,United Kingdom
+GSK,GlaxoSmithKline PLC,Health Care,United Kingdom
+SAN,Banco Santander SA,Financials,Spain
+UBS,UBS Group AG,Financials,Switzerland
+MUFG,Mitsubishi UFJ Financial Group,Financials,Japan
+HMC,Honda Motor Co.,Consumer Discretionary,Japan
+SNY,Sanofi,Health Care,France
+EQNR,Equinor ASA,Energy,Norway
+PBR,Petroleo Brasileiro SA (Petrobras),Energy,Brazil
+ITUB,Itau Unibanco Holding SA,Financials,Brazil
+VALE,Vale SA,Materials,Brazil
+ABBV,AbbVie Inc.,Health Care,United States
+BCS,Barclays PLC,Financials,United Kingdom
+DB,Deutsche Bank AG,Financials,Germany
+STLA,Stellantis NV,Consumer Discretionary,Netherlands
+BBD,Banco Bradesco SA,Financials,Brazil
+TEVA,Teva Pharmaceutical Industries,Health Care,Israel
+VOD,Vodafone Group PLC,Communication Services,United Kingdom
+INFY,Infosys Ltd,Information Technology,India
+HDB,HDFC Bank Ltd,Financials,India
+IBN,ICICI Bank Ltd,Financials,India
+WIT,Wipro Ltd,Information Technology,India
+TTM,Tata Motors Ltd,Consumer Discretionary,India
+RDY,Dr. Reddy's Laboratories,Health Care,India
+SE,Sea Ltd,Communication Services,Singapore
+GRAB,Grab Holdings,Industrials,Singapore
+MELI,MercadoLibre Inc.,Consumer Discretionary,Argentina
+NU,Nu Holdings Ltd,Financials,Brazil
+JD,JD.com Inc.,Consumer Discretionary,China
+PDD,PDD Holdings,Consumer Discretionary,China
+BIDU,Baidu Inc.,Communication Services,China
+NTES,NetEase Inc.,Communication Services,China
+LI,Li Auto Inc.,Consumer Discretionary,China
+NIO,NIO Inc.,Consumer Discretionary,China
+XPEV,XPeng Inc.,Consumer Discretionary,China
+TME,Tencent Music Entertainment,Communication Services,China
+BILI,Bilibili Inc.,Communication Services,China
+VIPS,Vipshop Holdings,Consumer Discretionary,China
+EDU,New Oriental Education,Consumer Discretionary,China
+TAL,TAL Education Group,Consumer Discretionary,China
+YMM,Full Truck Alliance,Industrials,China
+KB,KB Financial Group,Financials,South Korea
+SHG,Shinhan Financial Group,Financials,South Korea
+LPL,LG Display Co.,Information Technology,South Korea
+TLK,Telkom Indonesia,Communication Services,Indonesia
+PHI,PLDT Inc.,Communication Services,Philippines
+CHL,China Mobile (delisted ADR),Communication Services,China
+CHU,China Unicom,Communication Services,China
+CSIQ,Canadian Solar,Information Technology,Canada
+SHOP,Shopify Inc.,Information Technology,Canada
+CNI,Canadian National Railway,Industrials,Canada
+CP,Canadian Pacific Kansas City,Industrials,Canada
+SU,Suncor Energy,Energy,Canada
+ENB,Enbridge Inc.,Energy,Canada
+TD,Toronto-Dominion Bank,Financials,Canada
+RY,Royal Bank of Canada,Financials,Canada
+BMO,Bank of Montreal,Financials,Canada
+BNS,Bank of Nova Scotia,Financials,Canada
+MFC,Manulife Financial,Financials,Canada
+SLF,Sun Life Financial,Financials,Canada
+LYG,Lloyds Banking Group,Financials,United Kingdom
+NWG,NatWest Group PLC,Financials,United Kingdom
+ING,ING Groep NV,Financials,Netherlands
+BBVA,Banco Bilbao Vizcaya Argentaria,Financials,Spain
+ERIC,Telefonaktiebolaget LM Ericsson,Information Technology,Sweden
+NOK,Nokia Oyj,Information Technology,Finland
+ABB,ABB Ltd,Industrials,Switzerland
+BTI,British American Tobacco,Consumer Staples,United Kingdom
+PHG,Koninklijke Philips NV,Health Care,Netherlands
+RELX,RELX PLC,Industrials,United Kingdom
+ARM,Arm Holdings PLC,Information Technology,United Kingdom
+ICL,ICL Group Ltd,Materials,Israel
+CHKP,Check Point Software Technologies,Information Technology,Israel
+NICE,NICE Ltd,Information Technology,Israel
+WIX,Wix.com Ltd,Information Technology,Israel
+MNDY,monday.com Ltd,Information Technology,Israel
+GFI,Gold Fields Ltd,Materials,South Africa
+AU,AngloGold Ashanti,Materials,South Africa
+HMY,Harmony Gold Mining,Materials,South Africa
+SBSW,Sibanye Stillwater,Materials,South Africa
+E,Eni SpA,Energy,Italy
+TLRY,Tilray Brands,Health Care,Canada
+SAND,Sandstorm Gold,Materials,Canada
+GOLD,Barrick Gold,Materials,Canada
+AEM,Agnico Eagle Mines,Materials,Canada
+WCN,Waste Connections,Industrials,Canada
