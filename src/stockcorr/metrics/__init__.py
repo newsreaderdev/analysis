@@ -8,6 +8,7 @@ from stockcorr.metrics import (
     alternative,
     cointegration,
     factor,
+    kalman,
     lead_lag,
     linear,
     nonlinear,
@@ -30,6 +31,7 @@ METRICS: dict[str, Callable] = {
     "johansen": cointegration.johansen,
     "half_life": cointegration.half_life,
     "hurst": cointegration.hurst,
+    "kalman_beta": kalman.kalman_hedge,
     # lead-lag
     "cross_corr": lead_lag.cross_corr_at_lags,
     "granger": lead_lag.granger,
@@ -38,6 +40,7 @@ METRICS: dict[str, Callable] = {
     "beta": factor.beta_vs_index,
     "rolling_beta": factor.rolling_beta,
     "residual_corr": factor.residual_correlation,
+    "pca_residual_corr": factor.pca_residual_correlation,
     "downside_beta": factor.downside_beta,
     # vol / tail
     "tail_dep": vol_tail.tail_dependence,
@@ -58,7 +61,7 @@ METRICS: dict[str, Callable] = {
 
 # Metrics that benefit from a pre-filter (per-pair, computationally heavy)
 PREFILTERABLE = {
-    "coint", "coint_stability", "johansen", "half_life", "hurst",
+    "coint", "coint_stability", "johansen", "half_life", "hurst", "kalman_beta",
     "granger", "dtw",
     "tail_dep", "dcc",
     "mutual_info", "distance_corr",
