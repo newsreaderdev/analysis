@@ -11,9 +11,9 @@ Relationship categories covered:
 | Category | Metrics |
 |----------|---------|
 | Linear | Pearson (optional Ledoit-Wolf shrinkage), Spearman, Kendall, annualized covariance |
-| Cointegration / spread | Engle-Granger (bidirectional, FDR-adjusted), split-half stability, Johansen, half-life (+ OU params & entry z-score), Hurst |
+| Cointegration / spread | Engle-Granger (bidirectional, FDR-adjusted), split-half stability, Johansen, half-life (+ OU params & entry z-score), Hurst, Kalman dynamic hedge ratio |
 | Lead-lag | Vectorized cross-correlation at lags, Granger causality (fast F-test, FDR-adjusted), DTW (Sakoe-Chiba window, batch C path) |
-| Factor | Beta, rolling beta, multi-factor residual correlation (market + sector ETFs), downside/upside beta asymmetry |
+| Factor | Beta, rolling beta, multi-factor residual correlation (market + sector ETFs), PCA statistical-factor residual correlation (no external data needed), downside/upside beta asymmetry |
 | Volatility / tail | DCC-GARCH (QMLE grid, correlation path summary), tail dependence (+ CI), non-overlapping vol correlation |
 | Nonlinear | Mutual information (correlation-comparable scale), distance correlation (+ nonlinearity gap) |
 | Time-varying | Rolling correlation (+ `stable` screen), regime correlation, breakpoint detection (+ last break date) |
@@ -41,6 +41,13 @@ stockcorr screen --tickers sp500 --start 2020-01-01 --end 2024-12-31 \
 
 # Offline mode: screen a local wide CSV (first column = date, one column per ticker)
 stockcorr screen --input-csv panel.csv --out recommended_pairs.csv
+
+# Walk-forward backtest of the finalists (use a LATER window than the screen!)
+stockcorr backtest --input-csv panel.csv --pairs-csv recommended_pairs.csv \
+    --beta-method kalman --plot equity.png
+
+# Daily monitoring: today's z-score and action hint per pair
+stockcorr signal --input-csv panel.csv --pairs-csv recommended_pairs.csv
 
 # Fetch and cache prices
 stockcorr fetch --tickers sp500 --start 2020-01-01 --end 2024-12-31

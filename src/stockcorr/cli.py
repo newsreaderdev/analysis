@@ -215,6 +215,8 @@ def backtest(
     max_holding: int = typer.Option(None, "--max-holding",
                                     help="time stop in days (default: 2x formation half-life)"),
     cost_bps: float = typer.Option(5.0, "--cost-bps", help="per-side cost on gross notional"),
+    beta_method: str = typer.Option("ols", "--beta-method",
+                                    help="hedge-ratio estimator: 'ols' or 'kalman'"),
     out: Path = typer.Option(Path("backtest_trades.csv"), "--out"),
     plot: Path = typer.Option(None, "--plot", help="write equity-curve PNG here"),
     interval: str = typer.Option("1d", "--interval"),
@@ -257,6 +259,7 @@ def backtest(
         panel, pair_list,
         formation_window=formation, entry_z=entry_z, exit_z=exit_z,
         stop_z=stop_z, max_holding_days=max_holding, cost_bps=cost_bps,
+        beta_method=beta_method,
     )
     if not result.stats:
         typer.echo("No backtest produced (not enough data after the formation window?)")
@@ -285,6 +288,70 @@ def backtest(
         typer.echo(f"Equity curve -> {plot}")
 
 
+@app.command()
+def signal(
+    tickers: str = typer.Option(None, "--tickers"),
+    start: str = typer.Option(None, "--start"),
+    end: str = typer.Option(None, "--end"),
+    input_csv: Path = typer.Option(None, "--input-csv",
+                                   help="offline mode: wide CSV panel"),
+    pair: list[str] = typer.Option(None, "--pair", help="pair as 'A,B'; repeatable"),
+    pairs_csv: Path = typer.Option(None, "--pairs-csv",
+                                   help="CSV with ticker_a/ticker_b columns (screen output)"),
+    formation: int = typer.Option(252, "--formation"),
+    entry_z: float = typer.Option(2.0, "--entry-z"),
+    exit_z: float = typer.Option(0.5, "--exit-z"),
+    beta_method: str = typer.Option("ols", "--beta-method", help="'ols' or 'kalman'"),
+    out: Path = typer.Option(None, "--out", help="optional CSV output"),
+    interval: str = typer.Option("1d", "--interval"),
+):
+    """Today's z-score and action hint for each pair (daily monitoring).
+
+    Uses the same trailing-window estimation as the backtester, so what you
+    monitor is exactly what you backtested.
+    """
+    from stockcorr.signals import current_signals
+
+    if input_csv is not None:
+        panel = pd.read_csv(input_csv, index_col=0, parse_dates=True).sort_index()
+    else:
+        if not (tickers and start and end):
+            raise typer.BadParameter("either --input-csv or all of --tickers/--start/--end are required")
+        from stockcorr.data import YFinanceSource
+
+        tlist = _resolve(tickers)
+        panel = YFinanceSource().close_panel(tlist, start, end, interval=interval)
+
+    pair_list: list[tuple[str, str]] = []
+    if pairs_csv is not None:
+        pdf = pd.read_csv(pairs_csv)
+        pair_list += list(zip(pdf["ticker_a"], pdf["ticker_b"]))
+    for p in pair or []:
+        a, _, b = p.partition(",")
+        if not b:
+            raise typer.BadParameter(f"--pair must be 'A,B', got '{p}'")
+        pair_list.append((a.strip().upper(), b.strip().upper()))
+    if not pair_list:
+        raise typer.BadParameter("no pairs given: use --pair A,B and/or --pairs-csv file.csv")
+
+    sig = current_signals(panel, pair_list, formation_window=formation,
+                          entry_z=entry_z, exit_z=exit_z, beta_method=beta_method)
+    if sig.empty:
+        typer.echo("No signals (insufficient data for every pair?)")
+        raise typer.Exit(1)
+    display = sig.copy()
+    display["as_of"] = display["as_of"].astype(str)
+    num_cols = display.select_dtypes("number").columns
+    display[num_cols] = display[num_cols].round(4)
+    typer.echo(display.to_string(index=False))
+    n_entries = int(sig["action"].str.startswith("ENTER").sum())
+    typer.echo(f"\n{n_entries} entry signal(s) at |z| >= {entry_z}")
+    if out is not None:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        sig.to_csv(out, index=False)
+        typer.echo(f"Signals -> {out}")
+
+
 @plot_app.command("heatmap")
 def plot_heatmap_cmd(
     input: Path = typer.Option(..., "--input"),
@@ -306,12 +373,14 @@ def plot_network_cmd(
     metric: str = typer.Option(..., "--metric"),
     out: Path = typer.Option(Path("network.png"), "--out"),
     top: int = typer.Option(200, "--top"),
+    mst: bool = typer.Option(False, "--mst/--top-k",
+                             help="draw the minimum spanning tree instead of top-K edges"),
 ):
-    """Plot a top-K edge network from results."""
+    """Plot a top-K edge network (or the MST backbone) from results."""
     from stockcorr.viz.network import plot_network
 
     df = pd.read_parquet(input)
-    plot_network(df, metric=metric, out=out, top=top)
+    plot_network(df, metric=metric, out=out, top=top, mst=mst)
     typer.echo(f"Wrote {out}")
 
 
