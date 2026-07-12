@@ -22,13 +22,20 @@ def _cross_corr_matrix(X: np.ndarray, Y: np.ndarray) -> np.ndarray:
 def cross_corr_at_lags(
     prices: pd.DataFrame,
     max_lag: int = 5,
+    min_coverage: float = 0.9,
 ) -> MetricResult:
     """For each pair (a, b), report the lag k in [-max_lag, max_lag] that maximizes
     |Pearson(a_t, b_{t-k})|, fully vectorized (one matrix product per lag).
 
+    Columns with less than `min_coverage` of the panel's dates are dropped
+    BEFORE the row-wise dropna -- otherwise a single recent IPO with a short
+    history wipes out most of the sample for every other pair.
+
     Convention: positive lag k means b's past predicts a (b leads a by k days).
     """
-    rets = to_returns(prices).dropna(how="any")
+    rets = to_returns(prices)
+    keep = rets.count() >= int(min_coverage * len(rets))
+    rets = rets.loc[:, keep].dropna(how="any")
     if rets.empty or rets.shape[0] < 30:
         return MetricResult(pd.DataFrame(columns=["ticker_a", "ticker_b", "metric", "value", "lag"]))
     cols = list(rets.columns)

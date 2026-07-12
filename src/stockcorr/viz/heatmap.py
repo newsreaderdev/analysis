@@ -11,20 +11,21 @@ import seaborn as sns
 
 
 def to_matrix(long_df: pd.DataFrame, metric: str, symmetric: bool = True) -> pd.DataFrame:
-    """Reshape long-format metric output into a square matrix."""
+    """Reshape long-format metric output into a square matrix (vectorized pivot)."""
     sub = long_df[long_df["metric"] == metric]
     if sub.empty:
         raise ValueError(f"metric '{metric}' not found in input frame")
+    sub = sub.drop_duplicates(subset=["ticker_a", "ticker_b"], keep="last")
     tickers = sorted(set(sub["ticker_a"]).union(sub["ticker_b"]))
-    mat = pd.DataFrame(np.nan, index=tickers, columns=tickers, dtype=float)
-    for _, r in sub.iterrows():
-        mat.loc[r["ticker_a"], r["ticker_b"]] = r["value"]
-        if symmetric:
-            mat.loc[r["ticker_b"], r["ticker_a"]] = r["value"]
+    mat = (sub.pivot(index="ticker_a", columns="ticker_b", values="value")
+           .reindex(index=tickers, columns=tickers))
     if symmetric:
+        mat = mat.combine_first(mat.T)
         diag_val = 1.0 if metric in {"pearson", "spearman", "kendall"} else 0.0
-        for t in tickers:
-            mat.loc[t, t] = diag_val
+        diag = np.diag_indices(len(tickers))
+        vals = mat.to_numpy(copy=True)
+        vals[diag] = diag_val
+        mat = pd.DataFrame(vals, index=tickers, columns=tickers)
     return mat
 
 

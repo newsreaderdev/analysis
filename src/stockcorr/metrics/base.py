@@ -28,7 +28,13 @@ class MetricResult:
 
 
 def to_returns(prices: pd.DataFrame, method: str = "log") -> pd.DataFrame:
-    """Convert a wide price panel to returns. Drops the first row of NaNs."""
+    """Convert a wide price panel to returns. Drops the first row of NaNs.
+
+    Non-positive prices (bad ticks, unadjusted data errors) are masked to NaN
+    first -- log of zero/negative would otherwise inject +/-inf into every
+    downstream correlation.
+    """
+    prices = prices.where(prices > 0)
     if method == "log":
         rets = np.log(prices / prices.shift(1))
     elif method == "simple":
