@@ -110,6 +110,75 @@ def residual_correlation(prices: pd.DataFrame, benchmark: pd.Series | pd.DataFra
     return MetricResult(long, meta={"n_factors": n_factors})
 
 
+def pca_factors(prices: pd.DataFrame, n_components: int = 5,
+                min_coverage: float = 0.9) -> pd.DataFrame:
+    """Extract statistical factors from the return panel itself via PCA.
+
+    No external benchmark data needed: the first component is invariably 'the
+    market', the next few are sector/style axes. Returns the factor-return
+    series (dates x k) with explained variance ratios in `df.attrs`.
+    """
+    from sklearn.decomposition import PCA
+
+    rets = to_returns(prices)
+    keep = rets.count() >= int(min_coverage * len(rets))
+    clean = rets.loc[:, keep].dropna(how="any")
+    if clean.shape[0] < 60 or clean.shape[1] < n_components:
+        return pd.DataFrame()
+    pca = PCA(n_components=n_components)
+    scores = pca.fit_transform(clean.to_numpy())
+    out = pd.DataFrame(scores, index=clean.index,
+                       columns=[f"PC{i+1}" for i in range(n_components)])
+    out.attrs["explained_variance_ratio"] = pca.explained_variance_ratio_.tolist()
+    out.attrs["tickers_used"] = list(clean.columns)
+    return out
+
+
+def pca_residual_correlation(prices: pd.DataFrame, n_components: int = 5,
+                             min_coverage: float = 0.9) -> MetricResult:
+    """Residual correlation after removing the top-k PCA factors.
+
+    Same idea as `residual_correlation` but the factors are estimated from the
+    data itself, so it works without fetching any index/ETF series -- handy for
+    offline panels and for universes where the right sector proxies are unclear.
+    """
+    factors = pca_factors(prices, n_components=n_components, min_coverage=min_coverage)
+    if factors.empty:
+        return MetricResult(pd.DataFrame())
+    n_assets = prices.shape[1]
+    if n_components > n_assets / 5:
+        import warnings
+
+        warnings.warn(
+            f"pca_residual_corr: removing {n_components} components from only "
+            f"{n_assets} assets mechanically distorts residual correlations "
+            "(residuals are forced anti-correlated along removed directions). "
+            "Use a wider universe or fewer components -- rule of thumb: "
+            "n_components <= n_assets/5.",
+            stacklevel=2,
+        )
+    rets = to_returns(prices)
+    aligned = rets.join(factors, how="inner").dropna(subset=list(factors.columns))
+    F = aligned[factors.columns].to_numpy()
+    X = np.column_stack([np.ones(len(F)), F])
+    R = aligned[rets.columns]
+    # per-column regression tolerating per-ticker NaN gaps
+    resid = pd.DataFrame(index=aligned.index, columns=rets.columns, dtype=float)
+    for c in rets.columns:
+        y = R[c].to_numpy()
+        ok = ~np.isnan(y)
+        if ok.sum() < 60:
+            continue
+        coef, *_ = np.linalg.lstsq(X[ok], y[ok], rcond=None)
+        resid.loc[ok, c] = y[ok] - X[ok] @ coef
+    mat = resid.corr(min_periods=60)
+    long = symmetric_matrix_to_long(mat, "pca_residual_corr")
+    return MetricResult(long, meta={
+        "n_components": n_components,
+        "explained_variance_ratio": factors.attrs.get("explained_variance_ratio"),
+    })
+
+
 def downside_beta(prices: pd.DataFrame, benchmark: pd.Series) -> MetricResult:
     """Beta on benchmark-down days, plus upside beta and the asymmetry ratio.
 

@@ -49,6 +49,8 @@ class BacktestResult:
             f"total return      : {s.get('total_return', float('nan')):+.2%}",
             f"annualized return : {s.get('annual_return', float('nan')):+.2%}",
             f"Sharpe (daily)    : {s.get('sharpe', float('nan')):.2f}",
+            f"Sortino           : {s.get('sortino', float('nan')):.2f}",
+            f"Calmar            : {s.get('calmar', float('nan')):.2f}",
             f"max drawdown      : {s.get('max_drawdown', float('nan')):.2%}",
             f"avg holding days  : {s.get('avg_holding_days', float('nan')):.1f}",
             f"exit reasons      : {s.get('exit_reasons', {})}",
@@ -77,15 +79,22 @@ def _stats_from(daily_pnl: np.ndarray, index: pd.DatetimeIndex, trades: pd.DataF
     equity = pd.Series(1.0 + np.cumsum(daily_pnl), index=index)
     rets = pd.Series(daily_pnl, index=index)
     std = float(rets.std())
+    downside = rets[rets < 0]
+    downside_std = float(downside.std()) if len(downside) > 1 else float("nan")
     running_max = equity.cummax()
     drawdown = (equity - running_max) / running_max
+    max_dd = float(drawdown.min())
+    ann_ret = float(rets.mean() * 252)
     stats = {
         "n_trades": int(len(trades)),
         "win_rate": float((trades["pnl"] > 0).mean()) if len(trades) else float("nan"),
         "total_return": float(equity.iloc[-1] - 1.0),
-        "annual_return": float(rets.mean() * 252),
+        "annual_return": ann_ret,
         "sharpe": float(rets.mean() / std * np.sqrt(252)) if std > 0 else float("nan"),
-        "max_drawdown": float(drawdown.min()),
+        "sortino": (float(rets.mean() / downside_std * np.sqrt(252))
+                    if downside_std and downside_std > 0 else float("nan")),
+        "calmar": (ann_ret / abs(max_dd)) if max_dd < 0 else float("nan"),
+        "max_drawdown": max_dd,
         "avg_holding_days": float(trades["holding_days"].mean()) if len(trades) else float("nan"),
         "exit_reasons": trades["exit_reason"].value_counts().to_dict() if len(trades) else {},
     }
@@ -103,6 +112,7 @@ def backtest_pair(
     max_holding_days: int | None = None,
     cost_bps: float = 5.0,
     capital: float = 1.0,
+    beta_method: str = "ols",
 ) -> BacktestResult:
     """Walk-forward backtest of one pair. See module docstring for the rules.
 
@@ -110,6 +120,11 @@ def backtest_pair(
     again at exit -- i.e. a 4-leg round trip costs ~2 * cost_bps of capital.
     max_holding_days=None derives the time stop per-trade as 2x the formation
     half-life, clipped to [10, 120] days.
+
+    beta_method="kalman" replaces the formation-window OLS hedge ratio with
+    the final state of a Kalman filter run over the same window -- a better
+    estimate of the CURRENT relationship when beta drifts. Entry/exit rules
+    and the no-look-ahead structure are unchanged.
     """
     s = prices[[a, b]].dropna()
     if len(s) <= formation_window + 10:
@@ -134,7 +149,12 @@ def backtest_pair(
         if position == 0:
             wa = pa[t - formation_window: t]
             wb = pb[t - formation_window: t]
-            b0 = _ols_beta(wa, wb)
+            if beta_method == "kalman":
+                from stockcorr.metrics.kalman import kalman_beta_series
+
+                b0 = float(kalman_beta_series(wa, wb)["beta"][-1])
+            else:
+                b0 = _ols_beta(wa, wb)
             spread_w = wa - b0 * wb
             m, sd = float(spread_w.mean()), float(spread_w.std())
             if sd <= 0:
